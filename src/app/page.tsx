@@ -1,13 +1,13 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import { Play, Pause, ChevronRight, Music, Wifi, Battery } from 'lucide-react';
-
-const ReactPlayer = dynamic(() => import('react-player'), { ssr: false });
-
 import { useIPod } from '@/hooks/useIPod';
 import { ClickWheel } from '@/components/ClickWheel';
+
+// Standard ReactPlayer import
+const ReactPlayer = dynamic(() => import('react-player'), { ssr: false });
 
 export default function IPod() {
   const { 
@@ -16,10 +16,37 @@ export default function IPod() {
   } = useIPod();
 
   const [isClient, setIsClient] = useState(false);
+  
+  // Ref to access the player instance directly if needed
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const playerRef = useRef<any>(null);
+
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { setIsClient(true); }, []);
 
-  // Use the image from YouTube API if available, otherwise fallback
+  // --- 1. LOCK SCREEN / BACKGROUND CONTROLS (MediaSession API) ---
+  useEffect(() => {
+    if ('mediaSession' in navigator && currentSong) {
+      // Update Lock Screen Metadata
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: currentSong.label,
+        artist: 'YouTube Music', // Or fetch channel name if available
+        album: 'iPod Classic',
+        artwork: [
+          { src: currentSong.imageUrl || '', sizes: '512x512', type: 'image/jpeg' }
+        ]
+      });
+
+      // Bind Lock Screen Events to our Controls
+      navigator.mediaSession.setActionHandler('play', playPause);
+      navigator.mediaSession.setActionHandler('pause', playPause);
+      navigator.mediaSession.setActionHandler('previoustrack', prevSong);
+      navigator.mediaSession.setActionHandler('nexttrack', nextSong);
+    }
+  }, [currentSong, playPause, nextSong, prevSong]);
+
+
+  // --- 2. DYNAMIC THUMBNAIL ---
   const thumbnailUrl = currentSong?.imageUrl 
     ? currentSong.imageUrl
     : (currentSongId ? `https://img.youtube.com/vi/${currentSongId}/hqdefault.jpg` : null);
@@ -27,11 +54,14 @@ export default function IPod() {
   return (
     <main className="relative w-[370px] h-[620px] bg-aluminum rounded-[36px] p-6 flex flex-col mx-auto my-auto select-none border border-[#b0b0b0]">
       
+      {/* SCREEN BEZEL */}
       <div className="h-[300px] screen-bezel flex relative">
         <div className="screen-glass" style={{borderRadius: "36px 36px 10px 10px"}}></div>
 
+        {/* LCD DISPLAY */}
         <div className="w-full h-full bg-white rounded-[6px] overflow-hidden flex flex-col relative lcd-display" style={{borderRadius: "36px 36px 10px 10px"}}>
           
+          {/* STATUS BAR */}
           <div className="h-5 w-full bg-gradient-to-b from-[#e0e0e0] to-[#c0c0c0] border-b border-[#a0a0a0] flex items-center justify-between px-2 z-10 shrink-0 shadow-sm">
              <span className="text-[10px] font-bold text-black drop-shadow-sm flex items-center gap-1" style={{marginLeft: "22px"}}>
                <Wifi size={12} strokeWidth={3} />
@@ -43,6 +73,7 @@ export default function IPod() {
              </div>
           </div>
 
+          {/* MAIN CONTENT */}
           <div className="flex-1 flex overflow-hidden relative">
             {activeView === 'MENU' && (
               <div className="flex w-full h-full">
@@ -95,7 +126,7 @@ export default function IPod() {
             
             {activeView === 'COVER_FLOW' && (
                <div className="w-full h-full bg-[#111] flex items-center justify-center overflow-hidden relative">
-                   {/* Cover Flow Content Here */}
+                 <div className="text-white text-xs">Cover Flow Demo</div>
                </div>
             )}
           </div>
@@ -113,19 +144,38 @@ export default function IPod() {
         />
       </div>
 
-      <div style={{ position: 'absolute', width: 1, height: 1, opacity: 0, overflow: 'hidden', pointerEvents: 'none', zIndex: -1 }}>
+      {/* --- HIDDEN PLAYER (Slightly larger to prevent 'not visible' blocking) --- */}
+      <div style={{ position: 'absolute', width: 10, height: 10, opacity: 0, overflow: 'hidden', pointerEvents: 'none', zIndex: -1 }}>
         {currentSongId && isClient && (
           <ReactPlayer 
+            ref={playerRef}
             src={`https://www.youtube.com/watch?v=${currentSongId}`}
             playing={isPlaying}
             controls={false}
             width="100%"
             height="100%"
-            onEnded={nextSong} // Auto-play next song when current ends
+            onEnded={nextSong}
+            // Fix for First Song: Ensure internal player is synced when ready
+            onReady={() => {
+              console.log("Player Ready");
+              // If the app state thinks we are playing, force the player to play
+              if (isPlaying && playerRef.current) {
+                const internalPlayer = playerRef.current.getInternalPlayer();
+                // Safe check if internal player has playVideo method (YouTube API)
+                if (internalPlayer && typeof internalPlayer.playVideo === 'function') {
+                    internalPlayer.playVideo();
+                }
+              }
+            }}
+            playsInline={true}
+            autoPlay={true}
+            pip={true}
             config={{
               youtube: {
-                color: 'white',
-                origin: typeof window !== 'undefined' ? window.location.origin : undefined,
+                  disablekb: 1,
+                  fs: 0,
+                  // REMOVED 'autoplay: 1' to avoid conflict with React prop
+                  origin: typeof window !== 'undefined' ? window.location.origin : undefined
               }
             }}
           />
